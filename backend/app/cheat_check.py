@@ -56,8 +56,8 @@ async def run_cheat_check(player_id: str, inputs_to_check: list[str]):
         model=settings.OPENAI_MODEL_CHEAT_CHECK,
         force_json=False,  # We expect a simple string response (【正常】, 【轻度亵渎】, or 【重度渎道】
     )
-    ## 提取第一个 【】 内的内容作为结果
-    response = response[response.find("【") : response.find("】") + 1]
+    ## 提取最后一个 【】 内的内容作为结果
+    response = response[response.rfind("【") : response.rfind("】") + 1]
 
     level = "正常"
     if response not in ["【正常】", "【轻度亵渎】", "【重度渎道】"]:
