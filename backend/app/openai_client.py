@@ -195,7 +195,7 @@ async def generate_image(scene_prompt: str) -> str | None:
 - 忠实反映场景中人物的状态、动作和情绪"""
 
     try:
-        logger.info(f"开始生成图片，提示词长度: {len(combined_prompt)}")
+        logger.info(f"开始生成图片，提示词长度: {len(scene_prompt)}")
         
         response = await image_client.chat.completions.create(
             model=settings.IMAGE_GEN_MODEL,
