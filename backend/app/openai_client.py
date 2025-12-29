@@ -165,12 +165,12 @@ def is_image_gen_enabled() -> bool:
     return image_client is not None and settings.IMAGE_GEN_MODEL is not None
 
 
-async def generate_image_from_prompts(prompts: list[str]) -> str | None:
+async def generate_image(scene_prompt: str) -> str | None:
     """
     使用 OAI chat 格式请求生成图片。
     
     Args:
-        prompts: 最多5段提示词列表
+        scene_prompt: 包含游戏状态和最新场景的提示词
         
     Returns:
         生成的图片 base64 data URL，格式如 "data:image/jpeg;base64,..."
@@ -180,17 +180,14 @@ async def generate_image_from_prompts(prompts: list[str]) -> str | None:
         logger.warning("图片生成客户端未初始化，跳过图片生成。")
         return None
     
-    # 限制最多5段提示词
-    prompts = prompts[:5]
-    if not prompts:
+    if not scene_prompt:
         logger.warning("没有提供提示词，跳过图片生成。")
         return None
     
     # 构建图片生成的提示词
-    combined_prompt = "\n\n".join(prompts)
     image_prompt = f"""根据以下场景生成一张插画：
 
-{combined_prompt}
+{scene_prompt}
 
 要求：
 - 横版构图（16:9）

@@ -43,54 +43,36 @@ START_TRIAL_PROMPT = _load_prompt("start_trial_prompt.txt")
 
 
 # --- Image Generation Logic ---
-def _extract_scene_prompts(display_history: list[str], max_prompts: int = 5) -> list[str]:
+def _extract_scene_prompts(session: dict) -> str:
     """
-    从 display_history 中提取最近的场景描述作为图片生成提示词。
-    过滤掉系统消息、玩家输入等，只保留叙事内容。
+    从 session 中提取场景描述作为图片生成提示词。
+    构建方式与 _process_player_action_async 中的 session_copy 类似，
+    再加上最新的 narrative。
     """
-    prompts = []
+    session_copy = deepcopy(session)
+    session_copy.pop("internal_history", None)
     
-    # 从后往前遍历，提取叙事内容
+    # 获取最新的 narrative（从 display_history 末尾找非用户输入的内容）
+    display_history = session_copy.get("display_history", [])
+    latest_narrative = ""
     for item in reversed(display_history):
-        if not item or not isinstance(item, str):
-            continue
-        
-        # 跳过玩家输入（以 > 开头）
-        if item.strip().startswith(">"):
-            continue
-        
-        # 跳过系统提示（包含【系统提示】）
-        if "【系统提示" in item:
-            continue
-        
-        # 跳过开场白和规则说明
-        if "《浮生十梦》" in item or "【天道法则】" in item:
-            continue
-        
-        # 跳过兑换码相关
-        if "天道回响" in item or "redemption" in item.lower():
-            continue
-        
-        # 跳过惩罚相关
-        if "天机示警" in item or "天道斥逐" in item:
-            continue
-        
-        # 跳过错误消息
-        if "天机紊乱" in item:
-            continue
-        
-        # 提取有效的叙事内容（至少50个字符）
-        clean_text = item.strip()
-        if len(clean_text) >= 50:
-            # 截取前500字符作为提示词
-            prompts.append(clean_text[:500])
-            
-            if len(prompts) >= max_prompts:
+        if item and isinstance(item, str) and not item.strip().startswith(">"):
+            # 跳过系统消息和图片
+            if not item.startswith("【系统提示") and not item.startswith("!["):
+                latest_narrative = item[:500]
                 break
     
-    # 反转顺序，让最早的内容在前面
-    prompts.reverse()
-    return prompts
+    # display_history 转为字符串并截取最后 1000 字符
+    session_copy["display_history"] = (
+        "\n".join(display_history)
+    )[-1000:]
+    
+    # 构建提示词
+    prompt = f"当前游戏状态：\n{json.dumps(session_copy, ensure_ascii=False)}"
+    if latest_narrative:
+        prompt += f"\n\n最新场景：\n{latest_narrative}"
+    
+    return prompt
 
 
 async def _delayed_image_generation(player_id: str, trigger_time: float):
@@ -126,17 +108,16 @@ async def _delayed_image_generation(player_id: str, trigger_time: float):
             return
         
         # 提取场景提示词
-        display_history = session.get("display_history", [])
-        prompts = _extract_scene_prompts(display_history)
+        scene_prompt = _extract_scene_prompts(session)
         
-        if not prompts:
+        if not scene_prompt:
             logger.debug(f"图片生成取消：玩家 {player_id} 没有有效的场景描述")
             return
         
         logger.info(f"开始为玩家 {player_id} 生成场景图片")
         
         # 调用图片生成
-        image_data_url = await openai_client.generate_image_from_prompts(prompts)
+        image_data_url = await openai_client.generate_image(scene_prompt)
         
         if image_data_url:
             # 重新获取最新的 session（可能在生成期间有变化）
