@@ -188,15 +188,14 @@ async def generate_image_from_prompts(prompts: list[str]) -> str | None:
     
     # 构建图片生成的提示词
     combined_prompt = "\n\n".join(prompts)
-    image_prompt = f"""请根据以下场景描述生成一张精美的插画：
+    image_prompt = f"""根据以下场景生成一张插画：
 
 {combined_prompt}
 
 要求：
-- 横版构图（宽高比 16:9 或更宽）
-- 风格：中国古风仙侠水墨画风格
-- 氛围：神秘、空灵、意境深远
-- 画面要有层次感和故事感"""
+- 横版构图（16:9）
+- 唯美风格，画面清爽简洁
+- 忠实反映场景中人物的状态、动作和情绪"""
 
     try:
         logger.info(f"开始生成图片，提示词长度: {len(combined_prompt)}")
