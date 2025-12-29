@@ -195,7 +195,7 @@ body::after {
     color: var(--title-color);
 }
 
-.logout-button {
+.header-button {
     padding: 0.4rem 0.8rem;
     background: transparent;
     color: var(--text-color);
@@ -207,10 +207,28 @@ body::after {
     transition: all 0.3s ease;
 }
 
-.logout-button:hover {
+.header-button:hover {
     background: rgba(0,0,0,0.05);
     border-color: var(--accent-color);
     color: var(--accent-color);
+}
+
+#fullscreen-button {
+    font-size: 1.1rem;
+    padding: 0.3rem 0.6rem;
+}
+
+/* App Fullscreen Mode */
+body.app-fullscreen {
+    padding: 0;
+}
+
+body.app-fullscreen #app-container {
+    max-width: none;
+    max-height: none;
+    height: 100vh;
+    border-radius: 0;
+    border: none;
 }
 
 #status-panel {
@@ -329,6 +347,18 @@ body::after {
 #narrative-window pre code {
     padding: 0;
     background: none;
+}
+
+/* Generated scene images */
+#narrative-window img {
+    max-width: 100%;
+    max-height: 36rem; /* 6xl = 36rem */
+    width: auto;
+    height: auto;
+    display: block;
+    margin: 1rem auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px var(--shadow-color);
 }
 
 

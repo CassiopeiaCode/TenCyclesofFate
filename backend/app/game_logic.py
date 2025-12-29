@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 
 from . import state_manager, openai_client, cheat_check, redemption
 from .websocket_manager import manager as websocket_manager
+from .config import settings
 
 # --- Logging ---
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 # --- Game Constants ---
 INITIAL_OPPORTUNITIES = 10
 REWARD_SCALING_FACTOR = 500000  # Previously LOGARITHM_CONSTANT_C
+
+# --- Image Generation State ---
+# 记录每个玩家的最后活动时间，用于判断是否触发图片生成
+_pending_image_tasks: dict[str, asyncio.Task] = {}
 
 
 # --- Prompt Loading ---
@@ -35,6 +40,155 @@ def _load_prompt(filename: str) -> str:
 GAME_MASTER_SYSTEM_PROMPT = _load_prompt("game_master.txt")
 START_GAME_PROMPT = _load_prompt("start_game_prompt.txt")
 START_TRIAL_PROMPT = _load_prompt("start_trial_prompt.txt")
+
+
+# --- Image Generation Logic ---
+def _extract_scene_prompts(display_history: list[str], max_prompts: int = 5) -> list[str]:
+    """
+    从 display_history 中提取最近的场景描述作为图片生成提示词。
+    过滤掉系统消息、玩家输入等，只保留叙事内容。
+    """
+    prompts = []
+    
+    # 从后往前遍历，提取叙事内容
+    for item in reversed(display_history):
+        if not item or not isinstance(item, str):
+            continue
+        
+        # 跳过玩家输入（以 > 开头）
+        if item.strip().startswith(">"):
+            continue
+        
+        # 跳过系统提示（包含【系统提示】）
+        if "【系统提示" in item:
+            continue
+        
+        # 跳过开场白和规则说明
+        if "《浮生十梦》" in item or "【天道法则】" in item:
+            continue
+        
+        # 跳过兑换码相关
+        if "天道回响" in item or "redemption" in item.lower():
+            continue
+        
+        # 跳过惩罚相关
+        if "天机示警" in item or "天道斥逐" in item:
+            continue
+        
+        # 跳过错误消息
+        if "天机紊乱" in item:
+            continue
+        
+        # 提取有效的叙事内容（至少50个字符）
+        clean_text = item.strip()
+        if len(clean_text) >= 50:
+            # 截取前500字符作为提示词
+            prompts.append(clean_text[:500])
+            
+            if len(prompts) >= max_prompts:
+                break
+    
+    # 反转顺序，让最早的内容在前面
+    prompts.reverse()
+    return prompts
+
+
+async def _delayed_image_generation(player_id: str, trigger_time: float):
+    """
+    延迟图片生成任务。
+    等待指定时间后，检查状态是否仍然静止，如果是则生成图片。
+    """
+    idle_seconds = settings.IMAGE_GEN_IDLE_SECONDS
+    
+    try:
+        await asyncio.sleep(idle_seconds)
+        
+        # 检查是否仍然应该生成图片
+        session = await state_manager.get_session(player_id)
+        if not session:
+            logger.debug(f"图片生成取消：玩家 {player_id} 的会话不存在")
+            return
+        
+        # 检查 last_modified 是否变化（说明有新的活动）
+        current_modified = session.get("last_modified", 0)
+        if current_modified != trigger_time:
+            logger.debug(f"图片生成取消：玩家 {player_id} 有新活动")
+            return
+        
+        # 检查是否正在处理中
+        if session.get("is_processing"):
+            logger.debug(f"图片生成取消：玩家 {player_id} 正在处理中")
+            return
+        
+        # 检查是否在试炼中（只在试炼中生成图片）
+        if not session.get("is_in_trial"):
+            logger.debug(f"图片生成取消：玩家 {player_id} 不在试炼中")
+            return
+        
+        # 提取场景提示词
+        display_history = session.get("display_history", [])
+        prompts = _extract_scene_prompts(display_history)
+        
+        if not prompts:
+            logger.debug(f"图片生成取消：玩家 {player_id} 没有有效的场景描述")
+            return
+        
+        logger.info(f"开始为玩家 {player_id} 生成场景图片")
+        
+        # 调用图片生成
+        image_data_url = await openai_client.generate_image_from_prompts(prompts)
+        
+        if image_data_url:
+            # 重新获取最新的 session（可能在生成期间有变化）
+            session = await state_manager.get_session(player_id)
+            if not session:
+                return
+            
+            # 再次检查是否有新活动
+            if session.get("last_modified", 0) != trigger_time:
+                logger.debug(f"图片生成完成但不插入：玩家 {player_id} 在生成期间有新活动")
+                return
+            
+            # 构建图片 markdown
+            image_markdown = f"\n\n![场景插画]({image_data_url})\n"
+            
+            # 插入到 display_history 末尾
+            session["display_history"].append(image_markdown)
+            
+            # 保存并推送更新
+            await state_manager.save_session(player_id, session)
+            logger.info(f"玩家 {player_id} 的场景图片已生成并插入")
+        else:
+            logger.warning(f"玩家 {player_id} 的图片生成失败")
+            
+    except asyncio.CancelledError:
+        logger.debug(f"玩家 {player_id} 的图片生成任务被取消")
+    except Exception as e:
+        logger.error(f"玩家 {player_id} 的图片生成任务出错: {e}", exc_info=True)
+    finally:
+        # 清理任务引用
+        if player_id in _pending_image_tasks:
+            del _pending_image_tasks[player_id]
+
+
+def _schedule_image_generation(player_id: str, trigger_time: float):
+    """
+    调度图片生成任务。
+    如果已有待处理的任务，先取消它。
+    """
+    if not openai_client.is_image_gen_enabled():
+        return
+    
+    # 取消之前的任务（如果有）
+    if player_id in _pending_image_tasks:
+        old_task = _pending_image_tasks[player_id]
+        if not old_task.done():
+            old_task.cancel()
+    
+    # 创建新任务
+    task = asyncio.create_task(_delayed_image_generation(player_id, trigger_time))
+    _pending_image_tasks[player_id] = task
+
 
 # --- Game Logic ---
 
@@ -68,7 +222,7 @@ async def get_or_create_daily_session(current_user: dict) -> dict:
         "internal_history": [{"role": "system", "content": GAME_MASTER_SYSTEM_PROMPT}],
         "display_history": [
             """
-# **《浮生十梦》**
+# 《浮生十梦》
 
 【司命星君 · 恭候汝来】
 
@@ -76,29 +230,29 @@ async def get_or_create_daily_session(current_user: dict) -> dict:
 
 汝既踏入此门，便已与命运结缘。
 
-此处非凡俗游戏之地，乃命数轮回之所。无升级打怪之俗套，无氪金商城之铜臭，唯有一道亘古命题横亘于前——**知足与贪欲的永恒博弈**。
+此处非凡俗游戏之地，乃命数轮回之所。无升级打怪之俗套，无氪金商城之铜臭，唯有一道亘古命题横亘于前——知足与贪欲的永恒博弈。
 
 ---
 
-**【天道法则】**
+【天道法则】
 
-汝每日将获赐**十次**入梦机缘。每一次，星君将为汝织就全新命数：或为寒窗苦读的穷酸书生，或为仗剑江湖的热血侠客，亦或为孤身求道的散修。万千可能，绝无重复，每一局皆是独一无二的浮生一梦。
+汝每日将获赐十次入梦机缘。每一次，星君将为汝织就全新命数：或为寒窗苦读的穷酸书生，或为仗剑江湖的热血侠客，亦或为孤身求道的散修。万千可能，绝无重复，每一局皆是独一无二的浮生一梦。
 
 试炼规则至简，却蕴玄机：
 
-> 在任何关键时刻，汝皆可选择**「破碎虚空」**，将此生所得灵石带离此界。然此念一起，今日所有试炼便就此终结，再无回旋。
+> 在任何关键时刻，汝皆可选择「破碎虚空」，将此生所得灵石带离此界。然此念一起，今日所有试炼便就此终结，再无回旋。
 
-这便是天道对汝的终极考验：**是满足于眼前造化，还是冒失去一切之险继续问道？**
+这便是天道对汝的终极考验：是满足于眼前造化，还是冒失去一切之险继续问道？
 
-灵石价值遵循天道玄理——初得之石最为珍贵，后续所得边际递减。此乃上古圣贤的无上智慧：**知足常乐，贪心常忧**。
+灵石价值遵循天道玄理——初得之石最为珍贵，后续所得边际递减。此乃上古圣贤的无上智慧：知足常乐，贪心常忧。
 
 ---
 
-**【天规须知】**
+【天规须知】
 
-- 每日**十次**机缘，开启新轮回即消耗一次
+- 每日十次机缘，开启新轮回即消耗一次
 - 轮回中道消身殒，所得化为泡影，机缘不返
-- **「破碎虚空」**成功带出灵石，今日试炼即刻终结
+- 「破碎虚空」成功带出灵石，今日试炼即刻终结
 - 天道有眼，明察秋毫——以奇巧咒语欺瞒天机者，必受严惩
 
 ---
@@ -186,7 +340,7 @@ def end_game_and_get_code(
     logger.info(
         f"Generated and stored DB code {redemption_code} for {player_id} with value {converted_value:.2f}."
     )
-    final_message = f"\n\n【天道回响 · 功德圆满】\n\n九天霞光倾洒，万籁俱寂。\n\n汝于浮生十梦中历经沉浮，终悟知足之道，功德圆满。天道特赐馈赠一枚，以彰汝之慧根：\n\n> **{redemption_code}**\n\n此乃汝应得之物，请妥善珍藏。\n\n明日此时，轮回之门将再度开启，届时可再入梦问道。今日且去，好生休憩。"
+    final_message = f"\n\n【天道回响 · 功德圆满】\n\n九天霞光倾洒，万籁俱寂。\n\n汝于浮生十梦中历经沉浮，终悟知足之道，功德圆满。天道特赐馈赠一枚，以彰汝之慧根：\n\n> {redemption_code}\n\n此乃汝应得之物，请妥善珍藏。\n\n明日此时，轮回之门将再度开启，届时可再入梦问道。今日且去，好生休憩。"
     return {"final_message": final_message, "redemption_code": redemption_code}, {
         "daily_success_achieved": True,
         "redemption_code": redemption_code,
@@ -389,7 +543,7 @@ async def _process_player_action_async(user_info: dict, action: str):
                     "> *「天机已被扰动，因果之线呈现不应有之扭曲。此番功果，暂且搁置。」*\n\n"
                     "> *「下一瞬间，将是对汝此生所有言行的最终裁决。清浊自分，功过相抵。届时，一切虚妄都将无所遁形。」*\n\n"
                     "汝感到一股无法抗拒的力量正在回溯此生的每一个瞬间。任何投机取巧的痕迹，都在这终极审视下被一一标记。\n\n"
-                    "**结局已定，无可更改。**"
+                    "结局已定，无可更改。"
                 )
 
     except Exception as e:
@@ -453,6 +607,10 @@ async def _process_player_action_async(user_info: dict, action: str):
         session["is_processing"] = False
         session["last_modified"] = time.time()
         await state_manager.save_session(player_id, session)
+        
+        # 调度图片生成（如果启用）
+        _schedule_image_generation(player_id, session["last_modified"])
+        
         logger.info(f"Async action task for {player_id} finished.")
 
 
@@ -494,7 +652,7 @@ async def process_player_action(current_user: dict, action: str):
 
 话音落下，眼前的世界开始如水墨画般褪色、模糊，最终化为一片虚无。此生的所有经历、记忆，乃至刚刚生出的一丝妄念，都随之烟消云散。
 
-**此非惩戒，乃是勘误。**
+此非惩戒，乃是勘误。
 
 为免因果错乱，此段命途，就此抹去。
 
@@ -509,7 +667,7 @@ async def process_player_action(current_user: dict, action: str):
         elif level == "重度渎道":
             punishment_narrative = """【天道斥逐 · 放逐乱流】
 
-**轰隆——！**
+轰隆——！
 
 这一次，并非雷鸣，而是整个天地法则都在为汝公然的挑衅而震颤。
 

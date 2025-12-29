@@ -6,12 +6,22 @@ const appState = {
     gameState: null,
 };
 
+// --- Smooth Scroll State ---
+const scrollState = {
+    animationId: null,
+    isUserScrolling: false,
+    lastScrollTop: 0,
+    scrollTimeout: null,
+    isFirstRender: true,  // 标记是否为首次渲染（重连后）
+};
+
 // --- DOM Elements ---
 const DOMElements = {
     loginView: document.getElementById('login-view'),
     gameView: document.getElementById('game-view'),
     loginError: document.getElementById('login-error'),
     logoutButton: document.getElementById('logout-button'),
+    fullscreenButton: document.getElementById('fullscreen-button'),
     narrativeWindow: document.getElementById('narrative-window'),
     characterStatus: document.getElementById('character-status'),
     opportunitiesSpan: document.getElementById('opportunities'),
@@ -113,14 +123,125 @@ function showView(viewId) {
     document.getElementById(viewId).classList.add('active');
 }
 
+// --- Smooth Scroll Functions ---
+function stopSmoothScroll() {
+    if (scrollState.animationId) {
+        cancelAnimationFrame(scrollState.animationId);
+        scrollState.animationId = null;
+    }
+}
+
+function smoothScrollToBottom(element, pixelsPerSecond = 150) {
+    // 停止之前的滚动动画
+    stopSmoothScroll();
+    
+    // 如果用户正在手动滚动，不启动自动滚动
+    if (scrollState.isUserScrolling) {
+        return;
+    }
+    
+    const startScrollTop = element.scrollTop;
+    const minScrollDistance = 50; // 最小滚动距离阈值
+    
+    function tryStartScroll(retryCount = 0) {
+        const targetScrollTop = element.scrollHeight - element.clientHeight;
+        const distance = targetScrollTop - startScrollTop;
+        
+        // 如果滚动空间太小，等待内容加载（最多等1秒，每100ms检查一次）
+        if (distance < minScrollDistance && retryCount < 10) {
+            setTimeout(() => tryStartScroll(retryCount + 1), 100);
+            return;
+        }
+        
+        // 如果等了1秒还是没有足够的滚动空间，放弃
+        if (distance <= 0) {
+            return;
+        }
+        
+        // 再次检查用户是否开始手动滚动
+        if (scrollState.isUserScrolling) {
+            return;
+        }
+        
+        const startTime = performance.now();
+        const duration = (distance / pixelsPerSecond) * 1000;
+        
+        function animateScroll(currentTime) {
+            if (scrollState.isUserScrolling) {
+                scrollState.animationId = null;
+                return;
+            }
+            
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easeProgress = 1 - (1 - progress) * (1 - progress);
+            
+            element.scrollTop = startScrollTop + (distance * easeProgress);
+            
+            if (progress < 1) {
+                scrollState.animationId = requestAnimationFrame(animateScroll);
+            } else {
+                scrollState.animationId = null;
+            }
+        }
+        
+        scrollState.animationId = requestAnimationFrame(animateScroll);
+    }
+    
+    tryStartScroll();
+}
+
+function setupScrollInterruptListener(element) {
+    // 检测用户滚轮滚动
+    element.addEventListener('wheel', () => {
+        scrollState.isUserScrolling = true;
+        stopSmoothScroll();
+        
+        // 清除之前的超时
+        if (scrollState.scrollTimeout) {
+            clearTimeout(scrollState.scrollTimeout);
+        }
+        
+        // 2秒后重置用户滚动状态，允许下次自动滚动
+        scrollState.scrollTimeout = setTimeout(() => {
+            scrollState.isUserScrolling = false;
+        }, 2000);
+    }, { passive: true });
+    
+    // 检测触摸滚动
+    element.addEventListener('touchstart', () => {
+        scrollState.isUserScrolling = true;
+        stopSmoothScroll();
+    }, { passive: true });
+    
+    element.addEventListener('touchend', () => {
+        if (scrollState.scrollTimeout) {
+            clearTimeout(scrollState.scrollTimeout);
+        }
+        scrollState.scrollTimeout = setTimeout(() => {
+            scrollState.isUserScrolling = false;
+        }, 2000);
+    }, { passive: true });
+}
+
 function showLoading(isLoading) {
-    DOMElements.loadingSpinner.style.display = isLoading ? 'flex' : 'none';
+    // 只在初始化时显示全屏加载（gameState 为空时）
+    const showFullscreenSpinner = isLoading && !appState.gameState;
+    DOMElements.loadingSpinner.style.display = showFullscreenSpinner ? 'flex' : 'none';
+    
     const isProcessing = appState.gameState ? appState.gameState.is_processing : false;
     const buttonsDisabled = isLoading || isProcessing;
     // DOMElements.loginButton is removed
     DOMElements.actionInput.disabled = buttonsDisabled;
     DOMElements.actionButton.disabled = buttonsDisabled;
     DOMElements.startTrialButton.disabled = buttonsDisabled;
+    
+    // 在按钮上显示加载状态
+    if (buttonsDisabled && appState.gameState) {
+        DOMElements.actionButton.textContent = '⏳';
+    } else {
+        DOMElements.actionButton.textContent = '定';
+    }
 }
 
 function render() {
@@ -139,7 +260,14 @@ function render() {
     });
     DOMElements.narrativeWindow.innerHTML = '';
     DOMElements.narrativeWindow.appendChild(historyContainer);
-    DOMElements.narrativeWindow.scrollTop = DOMElements.narrativeWindow.scrollHeight;
+    
+    // 首次渲染直接跳到底部，之后使用平滑滚动
+    if (scrollState.isFirstRender) {
+        DOMElements.narrativeWindow.scrollTop = DOMElements.narrativeWindow.scrollHeight;
+        scrollState.isFirstRender = false;
+    } else {
+        smoothScrollToBottom(DOMElements.narrativeWindow, 150);
+    }
     
     const { is_in_trial, daily_success_achieved, opportunities_remaining } = appState.gameState;
     DOMElements.actionInput.parentElement.classList.toggle('hidden', !(is_in_trial || daily_success_achieved || opportunities_remaining < 0));
@@ -228,6 +356,20 @@ function renderRollEvent(rollEvent) {
     setTimeout(() => DOMElements.rollOverlay.classList.add('hidden'), 3000);
 }
 
+// --- Fullscreen Management ---
+function toggleFullscreen() {
+    document.body.classList.toggle('app-fullscreen');
+    updateFullscreenButton();
+}
+
+function updateFullscreenButton() {
+    const isFullscreen = document.body.classList.contains('app-fullscreen');
+    if (DOMElements.fullscreenButton) {
+        DOMElements.fullscreenButton.textContent = isFullscreen ? '⛶' : '⛶';
+        DOMElements.fullscreenButton.title = isFullscreen ? '退出全屏' : '全屏模式';
+    }
+}
+
 // --- Event Handlers ---
 function handleLogout() {
     api.logout();
@@ -278,8 +420,12 @@ function init() {
     // If not, the catch block in initializeGame will handle showing the login view.
     initializeGame();
 
+    // Setup scroll interrupt listener
+    setupScrollInterruptListener(DOMElements.narrativeWindow);
+
     // Setup event listeners regardless of initial view
     DOMElements.logoutButton.addEventListener('click', handleLogout);
+    DOMElements.fullscreenButton.addEventListener('click', toggleFullscreen);
     DOMElements.actionButton.addEventListener('click', () => handleAction());
     DOMElements.actionInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAction(); });
     DOMElements.startTrialButton.addEventListener('click', () => handleAction("开始试炼"));

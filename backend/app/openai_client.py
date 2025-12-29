@@ -1,5 +1,6 @@
 import logging
 from openai import AsyncOpenAI, APIError
+import re
 
 from .config import settings
 import asyncio
@@ -23,6 +24,26 @@ if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY != "your_openai_api_key_h
         client = None
 else:
     logger.warning("OPENAI_API_KEY 未设置或为占位符，OpenAI 客户端未初始化。")
+
+# --- Image Generation Client ---
+image_client: AsyncOpenAI | None = None
+if settings.IMAGE_GEN_MODEL:
+    try:
+        image_api_key = settings.IMAGE_GEN_API_KEY or settings.OPENAI_API_KEY
+        image_base_url = settings.IMAGE_GEN_BASE_URL or settings.OPENAI_BASE_URL
+        if image_api_key and image_api_key != "your_openai_api_key_here":
+            image_client = AsyncOpenAI(
+                api_key=image_api_key,
+                base_url=image_base_url,
+            )
+            logger.info(f"图片生成客户端初始化成功，模型: {settings.IMAGE_GEN_MODEL}")
+        else:
+            logger.warning("图片生成API密钥未设置，图片生成功能禁用。")
+    except Exception as e:
+        logger.error(f"初始化图片生成客户端失败: {e}")
+        image_client = None
+else:
+    logger.info("IMAGE_GEN_MODEL 未配置，图片生成功能禁用。")
 
 
 def _extract_json_from_response(response_str: str) -> str | None:
@@ -135,3 +156,87 @@ async def get_ai_response(
             # 指数退避延迟
             delay = base_delay * (2**attempt) + random.uniform(0, 1)
             await asyncio.sleep(delay)
+
+
+
+# --- Image Generation ---
+def is_image_gen_enabled() -> bool:
+    """检查图片生成功能是否启用"""
+    return image_client is not None and settings.IMAGE_GEN_MODEL is not None
+
+
+async def generate_image_from_prompts(prompts: list[str]) -> str | None:
+    """
+    使用 OAI chat 格式请求生成图片。
+    
+    Args:
+        prompts: 最多5段提示词列表
+        
+    Returns:
+        生成的图片 base64 data URL，格式如 "data:image/jpeg;base64,..."
+        如果失败返回 None
+    """
+    if not image_client or not settings.IMAGE_GEN_MODEL:
+        logger.warning("图片生成客户端未初始化，跳过图片生成。")
+        return None
+    
+    # 限制最多5段提示词
+    prompts = prompts[:5]
+    if not prompts:
+        logger.warning("没有提供提示词，跳过图片生成。")
+        return None
+    
+    # 构建图片生成的提示词
+    combined_prompt = "\n\n".join(prompts)
+    image_prompt = f"""请根据以下场景描述生成一张精美的插画：
+
+{combined_prompt}
+
+要求：
+- 横版构图（宽高比 16:9 或更宽）
+- 风格：中国古风仙侠水墨画风格
+- 氛围：神秘、空灵、意境深远
+- 画面要有层次感和故事感"""
+
+    try:
+        logger.info(f"开始生成图片，提示词长度: {len(combined_prompt)}")
+        
+        response = await image_client.chat.completions.create(
+            model=settings.IMAGE_GEN_MODEL,
+            messages=[
+                {"role": "user", "content": image_prompt}
+            ]
+        )
+        
+        ai_message = response.choices[0].message.content
+        if not ai_message:
+            logger.warning("图片生成响应为空")
+            return None
+        
+        # 从响应中提取 base64 图片
+        # 格式: [Generated Image](data:image/jpeg;base64,/...)
+        pattern = r'\[Generated Image\]\((data:image/[^;]+;base64,[^)]+)\)'
+        match = re.search(pattern, ai_message)
+        
+        if match:
+            image_data_url = match.group(1)
+            logger.info("图片生成成功")
+            return image_data_url
+        else:
+            # 尝试直接匹配 data:image 格式
+            pattern2 = r'(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)'
+            match2 = re.search(pattern2, ai_message)
+            if match2:
+                image_data_url = match2.group(1)
+                logger.info("图片生成成功（直接匹配）")
+                return image_data_url
+            
+            logger.warning(f"未能从响应中提取图片，响应内容: {ai_message[:200]}...")
+            return None
+            
+    except APIError as e:
+        logger.error(f"图片生成 API 错误: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"图片生成时发生意外错误: {e}", exc_info=True)
+        return None

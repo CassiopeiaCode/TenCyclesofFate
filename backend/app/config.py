@@ -6,6 +6,12 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-3.5-turbo"
     OPENAI_MODEL_CHEAT_CHECK: str = "qwen3-235b-a22b"
+    
+    # Image Generation Settings (optional)
+    IMAGE_GEN_MODEL: str | None = None  # 图片生成模型，如 "gpt-image-1" 或其他兼容模型
+    IMAGE_GEN_BASE_URL: str | None = None  # 图片生成API地址，为空则使用 OPENAI_BASE_URL
+    IMAGE_GEN_API_KEY: str | None = None  # 图片生成API密钥，为空则使用 OPENAI_API_KEY
+    IMAGE_GEN_IDLE_SECONDS: int = 10  # 状态静止多少秒后触发图片生成
 
     # JWT Settings for OAuth2
     SECRET_KEY: str
