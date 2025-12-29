@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from .websocket_manager import manager as websocket_manager
 from .live_system import live_manager
@@ -17,14 +18,41 @@ _auto_save_interval: int = 300  # 5 minutes
 logger = logging.getLogger(__name__)
 
 # --- Core Functions ---
+def _is_session_expired(session: dict, days: int = 3) -> bool:
+    """Check if a session is older than the specified number of days."""
+    session_date_str = session.get("session_date")
+    if not session_date_str:
+        return False  # Keep sessions without a date
+    
+    try:
+        session_date = datetime.strptime(session_date_str, "%Y-%m-%d").date()
+        cutoff_date = datetime.now().date() - timedelta(days=days)
+        return session_date < cutoff_date
+    except ValueError:
+        logger.warning(f"Invalid session_date format: {session_date_str}")
+        return False  # Keep sessions with invalid date format
+
+
 def load_from_json():
-    """Load game sessions from the JSON file at startup."""
+    """Load game sessions from the JSON file at startup, filtering out sessions older than 3 days."""
     global SESSIONS
     if _data_file_path.exists():
         try:
             with open(_data_file_path, "r", encoding="utf-8") as f:
-                SESSIONS = json.load(f)
-            logger.info(f"Successfully loaded data from {_data_file_path}")
+                raw_sessions = json.load(f)
+            
+            # Filter out expired sessions (older than 3 days)
+            original_count = len(raw_sessions)
+            SESSIONS = {
+                player_id: session
+                for player_id, session in raw_sessions.items()
+                if not _is_session_expired(session)
+            }
+            filtered_count = original_count - len(SESSIONS)
+            
+            if filtered_count > 0:
+                logger.info(f"Filtered out {filtered_count} expired sessions (older than 3 days)")
+            logger.info(f"Successfully loaded {len(SESSIONS)} sessions from {_data_file_path}")
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Could not load data from {_data_file_path}: {e}")
             SESSIONS = {}
