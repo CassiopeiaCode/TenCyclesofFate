@@ -49,19 +49,19 @@ class ConnectionManager:
                     msg for msg in live_payload["data"]["display_history"] if not msg.strip().startswith("> ")
                 ]
 
-            # Mask the redemption code if it exists
+            # Mask the redemption code if it exists - scan ALL messages in display_history
             if original_session.get("redemption_code"):
                 full_code = original_session["redemption_code"]
                 masked_code = f"{full_code[:1]}...{full_code[-1:]}"
                 
-                # Also mask the code in the last message of the display history
+                # Scan and mask the code in ALL messages of the display history
                 if live_payload["data"]["display_history"]:
                     try:
-                        last_message = live_payload["data"]["display_history"][-1]
-                        if full_code in last_message:
-                            live_payload["data"]["display_history"][-1] = last_message.replace(full_code, masked_code)
-                    except (IndexError, TypeError):
-                        pass # Ignore if history is empty or not a list
+                        for i, message in enumerate(live_payload["data"]["display_history"]):
+                            if isinstance(message, str) and full_code in message:
+                                live_payload["data"]["display_history"][i] = message.replace(full_code, masked_code)
+                    except (TypeError, AttributeError):
+                        pass  # Ignore if history format is unexpected
             
             payload_to_send = live_payload
 
