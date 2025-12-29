@@ -389,7 +389,7 @@ async def _process_player_action_async(user_info: dict, action: str):
         session_copy.pop("internal_history", 0)
         session_copy["display_history"] = (
             "\n".join(session_copy.get("display_history", []))
-        )[-1000:]
+        )[-300:]
         prompt_for_ai = (
             START_GAME_PROMPT
             if is_first_ever_trial_of_day
@@ -498,7 +498,10 @@ async def _process_player_action_async(user_info: dict, action: str):
                 player_id, session
             )  # Save before cheat check
             if "正常" == await cheat_check.run_cheat_check(player_id, inputs_to_check):
-                session = await state_manager.get_session(player_id)
+                # 重新获取 session，确保不为 None
+                updated_session = await state_manager.get_session(player_id)
+                if updated_session:
+                    session = updated_session
                 spirit_stones = trigger.get("spirit_stones", 0)
                 end_game_data, end_day_update = end_game_and_get_code(
                     user_id, player_id, spirit_stones
@@ -509,11 +512,13 @@ async def _process_player_action_async(user_info: dict, action: str):
                 )
 
             else:
-                session = await state_manager.get_session(player_id)
-                if not session:
-                    raise Exception(
-                        f"Post-cheat-check: Could not find session for {player_id}."
-                    )
+                # 重新获取 session，确保不为 None
+                updated_session = await state_manager.get_session(player_id)
+                if updated_session:
+                    session = updated_session
+                else:
+                    logger.error(f"Post-cheat-check: Could not find session for {player_id}.")
+                    # 继续使用原有 session
                 session["display_history"].append(
                     "【最终清算 · 天道审视】\n\n"
                     "就在汝即将破碎虚空之际——\n\n"
@@ -529,19 +534,21 @@ async def _process_player_action_async(user_info: dict, action: str):
 
     except Exception as e:
         logger.error(f"Error processing action for {player_id}: {e}", exc_info=True)
-        session["internal_history"].extend(
-            [
-                {
-                    "role": "system",
-                    "content": '请给出正确格式的JSON响应。\'请给出正确格式的JSON响应。必须是正确格式的json，包括narrative和（state_update或roll_request），刚才的格式错误，系统无法加载！正确输出{"key":value}\'，至少得是"{"开头吧',
-                },
-            ]
-        )
-        session["display_history"].append(
-            "【天机紊乱】\n\n"
-            "虚空微微震颤，汝之行动仿佛被一股无形之力化解，未能激起任何波澜。\n\n"
-            "天道运转偶有滞涩，此非汝之过。请稍候片刻，再作尝试。"
-        )
+        # 安全地更新 session
+        if "session" in locals() and session:
+            session["internal_history"].extend(
+                [
+                    {
+                        "role": "system",
+                        "content": '请给出正确格式的JSON响应。\'请给出正确格式的JSON响应。必须是正确格式的json，包括narrative和（state_update或roll_request），刚才的格式错误，系统无法加载！正确输出{"key":value}\'，至少得是"{"开头吧',
+                    },
+                ]
+            )
+            session["display_history"].append(
+                "【天机紊乱】\n\n"
+                "虚空微微震颤，汝之行动仿佛被一股无形之力化解，未能激起任何波澜。\n\n"
+                "天道运转偶有滞涩，此非汝之过。请稍候片刻，再作尝试。"
+            )
 
     finally:
         try:
@@ -571,7 +578,6 @@ async def _process_player_action_async(user_info: dict, action: str):
                             await cheat_check.run_cheat_check(
                                 player_id, inputs_to_check
                             )
-                            session = await state_manager.get_session(player_id)
 
                         logger.debug(f"Cheat check for {player_id} finished.")
                     else:
@@ -584,13 +590,18 @@ async def _process_player_action_async(user_info: dict, action: str):
                 exc_info=True,
             )
 
-        session["roll_event"] = None
-        session["is_processing"] = False
-        session["last_modified"] = time.time()
-        await state_manager.save_session(player_id, session)
-        
-        # 调度图片生成（如果启用）
-        _schedule_image_generation(player_id, session["last_modified"])
+        # 重新获取最新的 session 来重置状态
+        try:
+            session = await state_manager.get_session(player_id)
+            if session:
+                session["roll_event"] = None
+                session["is_processing"] = False
+                await state_manager.save_session(player_id, session)
+                
+                # 调度图片生成（如果启用）
+                _schedule_image_generation(player_id, session.get("last_modified", 0))
+        except Exception as e:
+            logger.error(f"Error resetting session state for {player_id}: {e}", exc_info=True)
         
         logger.info(f"Async action task for {player_id} finished.")
 
