@@ -184,19 +184,29 @@ async def generate_image(scene_prompt: str) -> str | None:
         logger.warning("没有提供提示词，跳过图片生成。")
         return None
     
-    # 构建图片生成的提示词
+    # 构建图片生成的提示词，使用XML标签包裹输入内容
     image_prompt = f"""根据以下场景生成一张插画：
 
----
+<scene_description>
 {scene_prompt}
----
+</scene_description>
 
-要求：
+<requirements>
 - 横版构图（16:9）
 - 唯美风格，画面清爽简洁
 - 忠实反映场景中人物的状态、动作和情绪
 - 避免生成任何令人不适、恐怖、血腥、暴力或负面情绪的画面
-- 保持画面温馨、舒适、积极向上"""
+- 保持画面温馨、舒适、积极向上
+</requirements>
+
+<content_policy>
+严禁生成以下类型的内容（NSFW内容）：
+- 任何形式的裸露、色情或性暗示内容
+- 过度暴力、血腥或恐怖的画面
+- 涉及未成年人的不当内容
+- 任何违反公序良俗的内容
+如果场景描述中包含任何可能导致生成不当内容的元素，请自动过滤并生成安全、健康、积极向上的画面。
+</content_policy>"""
 
     try:
         logger.info(f"开始生成图片，提示词长度: {len(scene_prompt)}")
