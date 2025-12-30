@@ -187,12 +187,16 @@ async def generate_image(scene_prompt: str) -> str | None:
     # 构建图片生成的提示词
     image_prompt = f"""根据以下场景生成一张插画：
 
+---
 {scene_prompt}
+---
 
 要求：
 - 横版构图（16:9）
 - 唯美风格，画面清爽简洁
-- 忠实反映场景中人物的状态、动作和情绪"""
+- 忠实反映场景中人物的状态、动作和情绪
+- 避免生成任何令人不适、恐怖、血腥、暴力或负面情绪的画面
+- 保持画面温馨、舒适、积极向上"""
 
     try:
         logger.info(f"开始生成图片，提示词长度: {len(scene_prompt)}")
