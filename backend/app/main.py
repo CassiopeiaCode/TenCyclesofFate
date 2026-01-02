@@ -27,11 +27,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Application startup...")
-    state_manager.load_from_json()
+    await state_manager.init_storage()
     state_manager.start_auto_save_task()
     yield
     logging.info("Application shutdown...")
-    state_manager.save_to_json()
+    await state_manager.shutdown_storage()
 
 # --- FastAPI App Instance ---
 app = FastAPI(lifespan=lifespan, title="浮生十梦")

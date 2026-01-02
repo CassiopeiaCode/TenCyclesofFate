@@ -87,13 +87,14 @@ async def get_ai_response(
     total_tokens = sum(len(m["content"]) for m in messages)
     logger.debug(f"发送到OpenAI的消息总令牌数: {total_tokens}")
 
+    # 如果 token 过多，在 messages 副本上删除，不影响原始 history
     _max_loop = 10000
     while total_tokens > 100000 and _max_loop > 0:
-        random_id = random.randint(1, (len(history) - 1) // 2)
-        # if history[random_id]["role"] != "system":  # 不删除系统消息
-        total_tokens -= len(history[random_id]["content"])
-        #     logger.warning("对话历史过长，随机删除一条消息以节省令牌。")
-        history.pop(random_id)
+        if len(messages) <= 2:  # 至少保留 system 和当前 user 消息
+            break
+        random_id = random.randint(1, len(messages) - 2)  # 不删除第一条和最后一条
+        total_tokens -= len(messages[random_id]["content"])
+        messages.pop(random_id)
         _max_loop -= 1
 
     if _max_loop == 0:
