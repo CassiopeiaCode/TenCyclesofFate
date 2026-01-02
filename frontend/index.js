@@ -4,6 +4,7 @@ const API_BASE_URL = "/api";
 // --- State Management ---
 const appState = {
     gameState: null,
+    lastRollEventId: null,  // 用于检测骰子事件变化
 };
 
 // --- Smooth Scroll State ---
@@ -94,10 +95,21 @@ const socketManager = {
                 switch (message.type) {
                     case 'full_state':
                         appState.gameState = message.data;
+                        checkAndShowRollEvent();
                         render();
                         break;
-                    case 'roll_event': // Listen for the separate, immediate roll event
-                        renderRollEvent(message.data);
+                    case 'patch':
+                        // Apply JSON Patch
+                        if (appState.gameState && message.patch) {
+                            try {
+                                const result = jsonpatch.applyPatch(appState.gameState, message.patch, true, false);
+                                appState.gameState = result.newDocument;
+                                checkAndShowRollEvent();
+                                render();
+                            } catch (err) {
+                                console.error('Failed to apply patch:', err);
+                            }
+                        }
                         break;
                     case 'error':
                         alert(`WebSocket Error: ${message.detail}`);
@@ -342,6 +354,14 @@ function renderCharacterStatus() {
         details.appendChild(content);
         container.appendChild(details);
     });
+}
+
+function checkAndShowRollEvent() {
+    const rollEvent = appState.gameState?.roll_event;
+    if (rollEvent && rollEvent.id && rollEvent.id !== appState.lastRollEventId) {
+        appState.lastRollEventId = rollEvent.id;
+        renderRollEvent(rollEvent);
+    }
 }
 
 function renderRollEvent(rollEvent) {

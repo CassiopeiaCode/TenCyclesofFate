@@ -16,3 +16,4 @@ aiosqlite
 mysql-connector-python
 aiofiles
 ijson
+jsonpatch

@@ -250,6 +250,7 @@ async def get_or_create_daily_session(current_user: dict) -> dict:
 
 async def _handle_roll_request(
     player_id: str,
+    session: dict,
     last_state: dict,
     roll_request: dict,
     original_action: str,
@@ -272,6 +273,7 @@ async def _handle_roll_request(
         outcome = "失败"
     result_text = f"【系统提示：针对 '{roll_type}' 的D{sides}判定已执行。目标值: {target}，投掷结果: {roll_result}，最终结果: {outcome}】"
     roll_event = {
+        "id": f"{player_id}_{int(time.time() * 1000)}",  # 唯一标识
         "type": roll_type,
         "target": target,
         "sides": sides,
@@ -280,11 +282,9 @@ async def _handle_roll_request(
         "result_text": result_text,
     }
 
-    # Send the roll event immediately and AWAIT its completion
-    await websocket_manager.send_json_to_player(
-        player_id, {"type": "roll_event", "data": roll_event}
-    )
-    await asyncio.sleep(0.03)  # Give time for async websocket delivery
+    # 把骰子事件存到 session，通过 state patch 传递
+    session["roll_event"] = roll_event
+    await state_manager.save_session(player_id, session)
 
     prompt_for_ai_part2 = f"{result_text}\n\n请严格基于此判定结果，继续叙事，并返回包含叙事和状态更新的最终JSON对象。这是当前的游戏状态JSON:\n{json.dumps(last_state, ensure_ascii=False)}"
     history_for_part2 = internal_history  # History is now updated before this call
@@ -438,6 +438,7 @@ async def _process_player_action_async(user_info: dict, action: str):
             # 3. Perform roll and get final AI response
             final_ai_json_str, roll_event = await _handle_roll_request(
                 player_id,
+                session,
                 session_copy,
                 ai_response_data["roll_request"],
                 action,
@@ -534,6 +535,7 @@ async def _process_player_action_async(user_info: dict, action: str):
 
     except Exception as e:
         logger.error(f"Error processing action for {player_id}: {e}", exc_info=True)
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         # 安全地更新 session
         if "session" in locals() and session:
             session["internal_history"].extend(
