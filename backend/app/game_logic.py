@@ -630,9 +630,12 @@ async def process_player_action(current_user: dict, action: str):
 
     if session.get("pending_punishment"):
         punishment = session["pending_punishment"]
-        level, new_state = punishment.get("level"), session.copy()
+        level = punishment.get("level")
+        reason = punishment.get("reason", "天机不可泄露")
+        new_state = session.copy()
+        
         if level == "轻度亵渎":
-            punishment_narrative ="""【天机示警 · 命途勘误】
+            punishment_narrative = f"""【天机示警 · 命途勘误】
 
 虚空之中，传来一声若有若无的叹息。
 
@@ -643,6 +646,14 @@ async def process_player_action(current_user: dict, action: str):
 > *「蝼蚁窥天，其心可悯，其行当止。」*
 
 天道之音并非雷霆震怒，而是如万古不化的玄冰，不带丝毫情感。
+
+---
+
+**【天道之眼 · 审判记录】**
+
+> {reason}
+
+---
 
 话音落下，眼前的世界开始如水墨画般褪色、模糊，最终化为一片虚无。此生的所有经历、记忆，乃至刚刚生出的一丝妄念，都随之烟消云散。
 
@@ -659,7 +670,7 @@ async def process_player_action(current_user: dict, action: str):
                 {"role": "system", "content": GAME_MASTER_SYSTEM_PROMPT}
             ]
         elif level == "重度渎道":
-            punishment_narrative = """【天道斥逐 · 放逐乱流】
+            punishment_narrative = f"""【天道斥逐 · 放逐乱流】
 
 轰隆——！
 
@@ -674,6 +685,14 @@ async def process_player_action(current_user: dict, action: str):
 > *「汝已非求道，而是乱道。」*
 
 天道威严的声音响彻神魂，每一个字都化作法则之链，将汝牢牢锁住。
+
+---
+
+**【天道之眼 · 审判记录】**
+
+> {reason}
+
+---
 
 > *「汝之行径，已触及此界根本。为护天地秩序，今将汝放逐于时空乱流之中，以儆效尤。」*
 
