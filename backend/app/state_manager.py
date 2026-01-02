@@ -24,7 +24,7 @@ INDEX_FILE = DATA_DIR / "index.json"
 OLD_DATA_FILE = Path("game_data.json")  # 旧数据文件，用于迁移
 
 # LRU 缓存配置
-MAX_CACHED_SESSIONS = 50  # 最多缓存 50 个会话的元数据
+MAX_CACHED_SESSIONS = 5  # 最多缓存 20 个会话的元数据
 
 # --- Module-level State ---
 _meta_cache: OrderedDict[str, dict] = OrderedDict()  # LRU 缓存
