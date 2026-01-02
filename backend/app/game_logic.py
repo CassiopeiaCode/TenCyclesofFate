@@ -354,7 +354,10 @@ def _apply_state_update(state: dict, update: dict) -> dict:
         keys = key.split(".")
         temp_state = state
         for part in keys[:-1]:
-            temp_state = temp_state.setdefault(part, {})
+            # 确保中间路径存在且不为 None
+            if part not in temp_state or temp_state[part] is None:
+                temp_state[part] = {}
+            temp_state = temp_state[part]
 
         # Handle list append/extend operations
         if keys[-1].endswith("+") and isinstance(temp_state.get(keys[-1][:-1]), list):
