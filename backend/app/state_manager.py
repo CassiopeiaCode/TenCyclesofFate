@@ -143,8 +143,12 @@ async def _write_jsonl_file(path: Path, items: list):
 
 
 # --- Session Expiration ---
+# 配置：超过多少天未活跃的玩家数据将被清理
+INACTIVE_DAYS_THRESHOLD = 3
+
+
 def _is_session_expired(session_date_str: str | None, days: int = 3) -> bool:
-    """检查会话是否过期"""
+    """检查会话是否过期（基于 session_date）"""
     if not session_date_str:
         return False
     try:
@@ -153,6 +157,18 @@ def _is_session_expired(session_date_str: str | None, days: int = 3) -> bool:
         return session_date < cutoff_date
     except ValueError:
         return False
+
+
+def _is_session_inactive(last_modified: float | None, days: int = INACTIVE_DAYS_THRESHOLD) -> bool:
+    """检查会话是否超过指定天数未活跃（基于 last_modified 时间戳）"""
+    if not last_modified:
+        return True  # 没有 last_modified 的视为过期
+    try:
+        last_active = datetime.fromtimestamp(last_modified)
+        cutoff_time = datetime.now() - timedelta(days=days)
+        return last_active < cutoff_time
+    except (ValueError, OSError):
+        return True  # 无效时间戳视为过期
 
 
 # --- Migration from Old Format ---
@@ -344,14 +360,17 @@ async def _async_init():
     if not _sessions_index and SESSIONS_DIR.exists() and any(SESSIONS_DIR.iterdir()):
         await _rebuild_index()
     
-    # 清理过期会话
+    # 清理过期会话（基于 session_date）
     await _cleanup_expired_sessions()
+    
+    # 清理超过3天未活跃的玩家数据（基于 last_modified）
+    await _cleanup_inactive_sessions()
     
     logger.info(f"文件存储初始化完成，当前 {len(_sessions_index)} 个会话")
 
 
 async def _cleanup_expired_sessions():
-    """清理过期会话"""
+    """清理过期会话（基于 session_date）"""
     expired = []
     for player_id in list(_sessions_index.keys()):
         meta = await _load_meta(player_id)
@@ -363,6 +382,23 @@ async def _cleanup_expired_sessions():
     
     if expired:
         logger.info(f"清理了 {len(expired)} 个过期会话")
+
+
+async def _cleanup_inactive_sessions():
+    """清理超过指定天数未活跃的玩家数据"""
+    inactive = []
+    for player_id, last_modified in list(_sessions_index.items()):
+        if _is_session_inactive(last_modified, INACTIVE_DAYS_THRESHOLD):
+            inactive.append(player_id)
+    
+    for player_id in inactive:
+        await _delete_session(player_id)
+        logger.debug(f"已删除超过 {INACTIVE_DAYS_THRESHOLD} 天未活跃的玩家数据: {player_id}")
+    
+    if inactive:
+        logger.info(f"启动清理：删除了 {len(inactive)} 个超过 {INACTIVE_DAYS_THRESHOLD} 天未活跃的玩家数据")
+    else:
+        logger.info(f"启动清理：没有发现超过 {INACTIVE_DAYS_THRESHOLD} 天未活跃的玩家数据")
 
 
 async def _delete_session(player_id: str):
