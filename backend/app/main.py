@@ -208,6 +208,13 @@ async def live_websocket_endpoint(websocket: WebSocket):
 app.include_router(api_router)
 app.include_router(root_router) # Include the root router before mounting static files
 static_files_dir = Path(__file__).parent.parent.parent / "frontend"
+
+# --- 404 Exception Handler ---
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: HTTPException):
+    """Redirect all 404 errors to the root page."""
+    return RedirectResponse(url="/")
+
 app.mount("/", StaticFiles(directory=static_files_dir, html=True), name="static")
 
 # --- Uvicorn Runner ---
