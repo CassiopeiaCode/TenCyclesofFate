@@ -10,6 +10,24 @@ import json
 # --- Logging ---
 logger = logging.getLogger(__name__)
 
+# --- 用户并发限制 ---
+MAX_CONCURRENT_REQUESTS_PER_USER = 2
+_user_semaphores: dict[str, asyncio.Semaphore] = {}
+_semaphore_lock = asyncio.Lock()
+
+
+async def _get_user_semaphore(user_id: str) -> asyncio.Semaphore:
+    """获取用户的信号量，如果不存在则创建"""
+    async with _semaphore_lock:
+        if user_id not in _user_semaphores:
+            _user_semaphores[user_id] = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS_PER_USER)
+        return _user_semaphores[user_id]
+
+
+class UserConcurrencyLimitExceeded(Exception):
+    """用户并发请求超限异常"""
+    pass
+
 # --- Client Initialization ---
 client: AsyncOpenAI | None = None
 if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY != "your_openai_api_key_here":
@@ -65,6 +83,7 @@ async def get_ai_response(
     history: list[dict] | None = None,
     model=settings.OPENAI_MODEL,
     force_json=True,
+    user_id: str | None = None,
 ) -> str:
     """
     从 OpenAI API 获取响应。
@@ -72,12 +91,41 @@ async def get_ai_response(
     Args:
         prompt: 用户的提示。
         history: 对话的先前消息列表。
+        model: 使用的模型。
+        force_json: 是否强制返回JSON格式。
+        user_id: 用户ID，用于并发限制。
 
     Returns:
         AI 的响应消息，或错误字符串。
     """
     if not client:
         return "错误：OpenAI客户端未初始化。请在 backend/.env 文件中正确设置您的 OPENAI_API_KEY。"
+    
+    # 用户并发限制
+    if user_id:
+        semaphore = await _get_user_semaphore(user_id)
+        if semaphore.locked() and semaphore._value == 0:
+            # 检查是否能立即获取，如果不能则说明已达上限
+            try:
+                # 尝试非阻塞获取
+                acquired = semaphore.locked()
+            except:
+                acquired = False
+        # 使用信号量包装后续逻辑
+        async with semaphore:
+            logger.debug(f"用户 {user_id} 获取LLM请求槽位，当前可用: {semaphore._value}")
+            return await _get_ai_response_impl(prompt, history, model, force_json)
+    else:
+        return await _get_ai_response_impl(prompt, history, model, force_json)
+
+
+async def _get_ai_response_impl(
+    prompt: str,
+    history: list[dict] | None = None,
+    model=settings.OPENAI_MODEL,
+    force_json=True,
+) -> str:
+    """实际执行AI请求的内部函数"""
 
     messages = []
     if history:
@@ -166,12 +214,13 @@ def is_image_gen_enabled() -> bool:
     return image_client is not None and settings.IMAGE_GEN_MODEL is not None
 
 
-async def generate_image(scene_prompt: str) -> str | None:
+async def generate_image(scene_prompt: str, user_id: str | None = None) -> str | None:
     """
     使用 OAI chat 格式请求生成图片。
     
     Args:
         scene_prompt: 包含游戏状态和最新场景的提示词
+        user_id: 用户ID，用于并发限制
         
     Returns:
         生成的图片 base64 data URL，格式如 "data:image/jpeg;base64,..."
@@ -184,6 +233,19 @@ async def generate_image(scene_prompt: str) -> str | None:
     if not scene_prompt:
         logger.warning("没有提供提示词，跳过图片生成。")
         return None
+    
+    # 用户并发限制
+    if user_id:
+        semaphore = await _get_user_semaphore(user_id)
+        async with semaphore:
+            logger.debug(f"用户 {user_id} 获取图片生成请求槽位，当前可用: {semaphore._value}")
+            return await _generate_image_impl(scene_prompt)
+    else:
+        return await _generate_image_impl(scene_prompt)
+
+
+async def _generate_image_impl(scene_prompt: str) -> str | None:
+    """实际执行图片生成的内部函数"""
     
     # 构建图片生成的提示词，使用XML标签包裹输入内容
     image_prompt = f"""根据以下场景生成一张插画：
