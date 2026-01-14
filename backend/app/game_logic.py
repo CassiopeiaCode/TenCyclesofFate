@@ -117,7 +117,7 @@ async def _delayed_image_generation(player_id: str, trigger_time: float):
         logger.info(f"开始为玩家 {player_id} 生成场景图片")
         
         # 调用图片生成
-        image_data_url = await openai_client.generate_image(scene_prompt)
+        image_data_url = await openai_client.generate_image(scene_prompt, user_id=player_id)
         
         if image_data_url:
             # 重新获取最新的 session（可能在生成期间有变化）
@@ -289,7 +289,7 @@ async def _handle_roll_request(
     prompt_for_ai_part2 = f"{result_text}\n\n请严格基于此判定结果，继续叙事，并返回包含叙事和状态更新的最终JSON对象。这是当前的游戏状态JSON:\n{json.dumps(last_state, ensure_ascii=False)}"
     history_for_part2 = internal_history  # History is now updated before this call
     ai_response = await openai_client.get_ai_response(
-        prompt=prompt_for_ai_part2, history=history_for_part2
+        prompt=prompt_for_ai_part2, history=history_for_part2, user_id=player_id
     )
     return ai_response, roll_event
 
@@ -411,7 +411,7 @@ async def _process_player_action_async(user_info: dict, action: str):
         await state_manager.save_session(player_id, session)
         # Get AI response
         ai_json_response_str = await openai_client.get_ai_response(
-            prompt=prompt_for_ai, history=session["internal_history"]
+            prompt=prompt_for_ai, history=session["internal_history"], user_id=player_id
         )
 
         if ai_json_response_str.startswith("错误："):

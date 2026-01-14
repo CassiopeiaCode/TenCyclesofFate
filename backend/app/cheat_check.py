@@ -82,6 +82,7 @@ async def run_cheat_check(player_id: str, inputs_to_check: list[str]) -> str:
         history=[{"role": "system", "content": CHEAT_CHECK_SYSTEM_PROMPT}],
         model=settings.OPENAI_MODEL_CHEAT_CHECK,
         force_json=False,
+        user_id=player_id,
     )
     
     # 解析XML格式的响应
