@@ -135,6 +135,15 @@ function showView(viewId) {
     document.getElementById(viewId).classList.add('active');
 }
 
+function renderMarkdownSafe(markdownText) {
+    const rawHtml = marked.parse(markdownText || "", { mangle: false, headerIds: false });
+    return DOMPurify.sanitize(rawHtml, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "link", "meta"],
+        FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onmouseenter", "onmouseleave", "style"],
+    });
+}
+
 // --- Smooth Scroll Functions ---
 function stopSmoothScroll() {
     if (scrollState.animationId) {
@@ -265,7 +274,7 @@ function render() {
     const historyContainer = document.createDocumentFragment();
     (appState.gameState.display_history || []).forEach(text => {
         const p = document.createElement('div');
-        p.innerHTML = marked.parse(text);
+        p.innerHTML = renderMarkdownSafe(text);
         if (text.startsWith('> ')) p.classList.add('user-input-message');
         else if (text.startsWith('【')) p.classList.add('system-message');
         historyContainer.appendChild(p);

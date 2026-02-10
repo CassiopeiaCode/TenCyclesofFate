@@ -347,8 +347,26 @@ def _extract_json_from_response(response_str: str) -> str | None:
     return None
 
 
+def _effective_unchecked_rounds_for_cheat_check(raw_value: object) -> int:
+    """
+    `unchecked_rounds_count` 只应由后端维护；若被注入为负数，会导致抽样回溯轮数为负，
+    从而使天眼检查拿不到任何输入而被绕过。
+
+    修复策略：天眼检查时若 raw_value < 0，则强制按 10 轮回溯；检查后计数会在天眼中重置。
+    """
+    try:
+        v = int(raw_value)
+    except (TypeError, ValueError):
+        return 0
+    if v < 0:
+        return 10
+    return v
+
+
 def _apply_state_update(state: dict, update: dict) -> dict:
     for key, value in update.items():
+        if key == "unchecked_rounds_count":
+            continue
         # if key in ["daily_success_achieved"]: continue  # Prevent overwriting daily success flag
 
         keys = key.split(".")
@@ -494,8 +512,11 @@ async def _process_player_action_async(user_info: dict, action: str):
         # --- Common final logic for both paths ---
         trigger = state_update.get("trigger_program")
         if trigger and trigger.get("name") == "spiritStoneConverter":
+            effective_unchecked = _effective_unchecked_rounds_for_cheat_check(
+                session.get("unchecked_rounds_count", 0)
+            )
             inputs_to_check = await state_manager.get_last_n_inputs(
-                player_id, 8 + session["unchecked_rounds_count"]
+                player_id, 8 + effective_unchecked
             )
 
             await state_manager.save_session(
@@ -570,9 +591,12 @@ async def _process_player_action_async(user_info: dict, action: str):
                     # Re-fetch the session to get the most up-to-date count
                     s = await state_manager.get_session(player_id)
                     if s:
-                        unchecked_count = s.get("unchecked_rounds_count", 0)
+                        unchecked_count_raw = s.get("unchecked_rounds_count", 0)
+                        unchecked_count = _effective_unchecked_rounds_for_cheat_check(
+                            unchecked_count_raw
+                        )
                         logger.debug(
-                            f"Running cheat check for {player_id} with {unchecked_count} rounds."
+                            f"Running cheat check for {player_id} with {unchecked_count_raw} rounds (effective={unchecked_count})."
                         )
 
                         inputs_to_check = await state_manager.get_last_n_inputs(

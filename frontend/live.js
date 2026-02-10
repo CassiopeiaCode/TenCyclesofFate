@@ -88,6 +88,15 @@ function showLoading(isLoading) {
     DOMElements.loadingSpinner.style.display = isLoading ? 'flex' : 'none';
 }
 
+function renderMarkdownSafe(markdownText) {
+    const rawHtml = marked.parse(markdownText || "", { mangle: false, headerIds: false });
+    return DOMPurify.sanitize(rawHtml, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "link", "meta"],
+        FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onmouseenter", "onmouseleave", "style"],
+    });
+}
+
 function render() {
     if (liveState.liveGameState) {
         showLoading(false);
@@ -129,7 +138,7 @@ function renderNarrative() {
     const historyContainer = document.createDocumentFragment();
     (liveState.liveGameState.display_history || []).forEach(text => {
         const p = document.createElement('div');
-        p.innerHTML = marked.parse(text);
+        p.innerHTML = renderMarkdownSafe(text);
         if (text.startsWith('> ')) p.classList.add('user-input-message');
         else if (text.startsWith('【')) p.classList.add('system-message');
         historyContainer.appendChild(p);
