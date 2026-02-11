@@ -367,6 +367,8 @@ def _apply_state_update(state: dict, update: dict) -> dict:
     for key, value in update.items():
         if key == "unchecked_rounds_count":
             continue
+        if key == "internal_history" or key.startswith("internal_history."):
+            continue
         # if key in ["daily_success_achieved"]: continue  # Prevent overwriting daily success flag
 
         keys = key.split(".")
